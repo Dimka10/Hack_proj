@@ -56,3 +56,29 @@ class LoginSerializer(serializers.Serializer):
 
         attrs['user'] = user
         return attrs
+
+
+class ChangePassword(serializers.Serializer):
+    old_password = serializers.CharField(min_length=8, required=True)
+    new_password = serializers.CharField(min_length=8, required=True)
+    new_password_confirmation = serializers.CharField(min_length=8, required=True)
+
+    def validate_all_password(self, old_password):
+        request = self.context.get('request')
+        user = request.user
+        if not user.check_password(old_password):
+            raise serializers.ValidationError('Passwords did not match')
+        return old_password
+
+    def validate(self, attrs):
+        new_password = attrs.get('new_password')
+        new_password_confirmation = attrs.get('new_password_confirmation')
+        if new_password != new_password_confirmation:
+            raise serializers.ValidationError('Bad credentials')
+        return attrs
+
+    def set_new_password(self):
+        new_password = self.validated_data.get('new_password')
+        user = self.context.get('request').user
+        user.set_password(new_password)
+        user.save()
