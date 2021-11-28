@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework import serializers
+from applications.account.utils import send_activation_email
 
 
 User = get_user_model()
@@ -32,6 +33,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         email = validated_data.get('email')
         password = validated_data.get('password')
         user = User.objects.create_user(email, password)
+        send_activation_email(email=user.email, activation_code=user.activation_code,
+                              is_password=False)
         return user
 
 
@@ -58,27 +61,45 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
-class ChangePassword(serializers.Serializer):
-    old_password = serializers.CharField(min_length=8, required=True)
-    new_password = serializers.CharField(min_length=8, required=True)
-    new_password_confirmation = serializers.CharField(min_length=8, required=True)
+class CreateNewPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    activation_code = serializers.CharField(max_length=60)
+    password = serializers.CharField(min_length=6, required=True)
+    password_confirm = serializers.CharField(min_length=6, required=True)
 
-    def validate_all_password(self, old_password):
-        request = self.context.get('request')
-        user = request.user
-        if not user.check_password(old_password):
-            raise serializers.ValidationError('Passwords did not match')
-        return old_password
+    def validate_email(self, email):
+        User = get_user_model()
+        if not User.objects.filter(email=email).exists():
+            raise serializers.ValidationError('User with given email does not exist')
+        return email
+
+    def validate_activation_code(self, activation_code):
+        User = get_user_model()
+        if User.objects.filter(activation_code=activation_code, is_active=False).exists():
+            raise serializers.ValidationError('Wrong activation code')
+        return activation_code
 
     def validate(self, attrs):
-        new_password = attrs.get('new_password')
-        new_password_confirmation = attrs.get('new_password_confirmation')
-        if new_password != new_password_confirmation:
-            raise serializers.ValidationError('Bad credentials')
+        password = attrs.get('password')
+        password_confirmation = attrs.get('password_confirm')
+        if password != password_confirmation:
+            raise serializers.ValidationError('Passwords do not match')
         return attrs
 
-    def set_new_password(self):
-        new_password = self.validated_data.get('new_password')
-        user = self.context.get('request').user
-        user.set_password(new_password)
+    def save(self, **kwargs):
+        data = self.validated_data
+        email = data.get('email')
+        activation_code = data.get('activation_code')
+        password = data.get('password')
+
+        try:
+            User = get_user_model()
+            user = User.objects.get(email=email, activation_code=activation_code)
+        except:
+            raise serializers.ValidationError('User not found')
+
+        user.is_active = True
+        user.activation_code = ''
+        user.set_password(password)
         user.save()
+        return user
